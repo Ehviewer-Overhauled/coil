@@ -15,6 +15,7 @@ import coil.fetch.DrawableResult
 import coil.fetch.FetchResult
 import coil.fetch.Fetcher
 import coil.fetch.SourceResult
+import coil.memory.MemoryCache
 import coil.memory.MemoryCacheService
 import coil.request.ImageRequest
 import coil.request.ImageResult
@@ -35,7 +36,10 @@ import coil.util.safeConfig
 import coil.util.toDrawable
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.resume
 
 /** The last interceptor in the chain which executes the [ImageRequest]. */
 internal class EngineInterceptor(
@@ -43,6 +47,7 @@ internal class EngineInterceptor(
     private val requestService: RequestService,
     private val logger: Logger?,
 ) : Interceptor {
+    val pendingContinuationMap: HashMap<MemoryCache.Key, MutableList<Continuation<Unit>>> = hashMapOf()
 
     private val memoryCacheService = MemoryCacheService(imageLoader, requestService, logger)
 
@@ -62,9 +67,32 @@ internal class EngineInterceptor(
 
             // Check the memory cache.
             val cacheKey = memoryCacheService.newCacheKey(request, mappedData, options, eventListener)
-            val cacheValue = cacheKey?.let { memoryCacheService.getCacheValue(request, it, size, scale) }
+            var cacheValue = cacheKey?.let { memoryCacheService.getCacheValue(request, it, size, scale) }
 
             // Fast path: return the value from the memory cache.
+            if (cacheValue != null) {
+                return memoryCacheService.newResult(chain, request, cacheKey, cacheValue)
+            }
+
+            var existPendingContinuations: MutableList<Continuation<Unit>>? = null
+
+            synchronized(pendingContinuationMap) {
+                cacheKey?.let {
+                    existPendingContinuations = pendingContinuationMap[it]
+                    existPendingContinuations ?: { pendingContinuationMap[it] = mutableListOf() }
+                }
+            }
+
+            existPendingContinuations?.apply {
+                suspendCancellableCoroutine {
+                        continuation -> add(continuation)
+                    continuation.invokeOnCancellation { remove(continuation) }
+                }
+            }
+
+            // Get it again
+            cacheValue = cacheKey?.let { memoryCacheService.getCacheValue(request, it, size, scale) }
+
             if (cacheValue != null) {
                 return memoryCacheService.newResult(chain, request, cacheKey, cacheValue)
             }
@@ -76,6 +104,11 @@ internal class EngineInterceptor(
 
                 // Write the result to the memory cache.
                 val isCached = memoryCacheService.setCacheValue(cacheKey, request, result)
+
+                // Wake all continuations shared with the same memory key since we get it
+                synchronized(pendingContinuationMap) {
+                    pendingContinuationMap.remove(cacheKey)?.forEach { it.resume(Unit) }
+                }
 
                 // Return the result.
                 SuccessResult(
