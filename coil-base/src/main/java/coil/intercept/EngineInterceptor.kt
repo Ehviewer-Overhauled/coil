@@ -65,40 +65,40 @@ internal class EngineInterceptor(
         eventListener.mapEnd(request, mappedData)
 
         val cacheKey = memoryCacheService.newCacheKey(request, mappedData, options, eventListener)
+        // Check the memory cache.
+        var cacheValue = cacheKey?.let { memoryCacheService.getCacheValue(request, it, size, scale) }
+
+        // Fast path: return the value from the memory cache.
+        if (cacheValue != null) {
+            return memoryCacheService.newResult(chain, request, cacheKey, cacheValue)
+        }
+
+        // If a request is to be execute
+        // record its memory key and suspend any other requests with the same memory key
+        // until execution complete and result is available in memory cache
+        var existPendingContinuations: MutableList<Continuation<Unit>>? = null
+        cacheKey?.let {
+            synchronized(pendingContinuationMap) {
+                existPendingContinuations = pendingContinuationMap[it]
+                existPendingContinuations ?: { pendingContinuationMap[it] = mutableListOf() }
+            }
+        }
+
+        existPendingContinuations?.apply {
+            suspendCancellableCoroutine { continuation ->
+                add(continuation)
+                continuation.invokeOnCancellation { remove(continuation) }
+            }
+        }
+
+        // Check memory cache again after pending continuation is resumed
+        cacheValue = cacheKey?.let { memoryCacheService.getCacheValue(request, it, size, scale) }
+
+        if (cacheValue != null) {
+            return memoryCacheService.newResult(chain, request, cacheKey, cacheValue)
+        }
+        
         try {
-            // Check the memory cache.
-            var cacheValue = cacheKey?.let { memoryCacheService.getCacheValue(request, it, size, scale) }
-
-            // Fast path: return the value from the memory cache.
-            if (cacheValue != null) {
-                return memoryCacheService.newResult(chain, request, cacheKey, cacheValue)
-            }
-
-            // If a request is to be execute
-            // record its memory key and suspend any other requests with the same memory key 
-            // until execution complete and result is available in memory cache
-            var existPendingContinuations: MutableList<Continuation<Unit>>? = null
-            cacheKey?.let { 
-                synchronized(pendingContinuationMap) {
-                    existPendingContinuations = pendingContinuationMap[it]
-                    existPendingContinuations ?: { pendingContinuationMap[it] = mutableListOf() }
-                }
-            }
-
-            existPendingContinuations?.apply {
-                suspendCancellableCoroutine { continuation -> 
-                    add(continuation)
-                    continuation.invokeOnCancellation { remove(continuation) }
-                }
-            }
-
-            // Check memory cache again after pending continuation is resumed
-            cacheValue = cacheKey?.let { memoryCacheService.getCacheValue(request, it, size, scale) }
-
-            if (cacheValue != null) {
-                return memoryCacheService.newResult(chain, request, cacheKey, cacheValue)
-            }
-
             // Slow path: fetch, decode, transform, and cache the image.
             return withContext(request.fetcherDispatcher) {
                 // Fetch and decode the image.
