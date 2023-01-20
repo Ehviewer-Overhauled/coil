@@ -80,7 +80,7 @@ internal class EngineInterceptor(
         cacheKey?.let {
             synchronized(pendingContinuationMap) {
                 existPendingContinuations = pendingContinuationMap[it]
-                existPendingContinuations ?: { pendingContinuationMap[it] = mutableListOf() }
+                if (existPendingContinuations == null) pendingContinuationMap[it] = mutableListOf()
             }
         }
 
