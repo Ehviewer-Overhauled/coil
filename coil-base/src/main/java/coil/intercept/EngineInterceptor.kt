@@ -125,15 +125,19 @@ internal class EngineInterceptor(
                 )
             }
         } catch (throwable: Throwable) {
-            synchronized(pendingContinuationMap) {
-                // Wake up a pending continuation to continue executing task
-                val successor = pendingContinuationMap[cacheKey]?.get(0)?.apply { resume(Unit) }
-                // if no successor, delete this entry from hashmap
-                successor ?: pendingContinuationMap.remove(cacheKey)
-            }
             if (throwable is CancellationException) {
+                synchronized(pendingContinuationMap) {
+                    // Wake up a pending continuation to continue executing task
+                    val successor = pendingContinuationMap[cacheKey]?.removeFirstOrNull()?.apply { resume(Unit) }
+                    // if no successor, delete this entry from hashmap
+                    successor ?: pendingContinuationMap.remove(cacheKey)
+                }
                 throw throwable
             } else {
+                // Wake all pending continuations since this request is to be failed
+                synchronized(pendingContinuationMap) {
+                    pendingContinuationMap.remove(cacheKey)?.forEach { it.resume(Unit) }
+                }
                 return requestService.errorResult(chain.request, throwable)
             }
         }
