@@ -70,7 +70,7 @@ internal class EngineInterceptor(
 
         // Fast path: return the value from the memory cache.
         if (cacheValue != null) {
-            return memoryCacheService.newResult(chain, request, cacheKey, cacheValue)
+            return memoryCacheService.newResult(chain, request, cacheKey!!, cacheValue)
         }
 
         // If a request is to be execute
@@ -95,7 +95,7 @@ internal class EngineInterceptor(
         cacheValue = cacheKey?.let { memoryCacheService.getCacheValue(request, it, size, scale) }
 
         if (cacheValue != null) {
-            return memoryCacheService.newResult(chain, request, cacheKey, cacheValue)
+            return memoryCacheService.newResult(chain, request, cacheKey!!, cacheValue)
         }
         
         try {
