@@ -88,6 +88,7 @@ internal class EngineInterceptor(
             suspendCancellableCoroutine { continuation ->
                 add(continuation)
                 continuation.invokeOnCancellation { remove(continuation) }
+                if (pendingContinuationMap[cacheKey] !== this) continuation.resume(Unit)
             }
         }
 
