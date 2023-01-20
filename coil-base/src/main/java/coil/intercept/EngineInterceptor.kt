@@ -74,7 +74,7 @@ internal class EngineInterceptor(
         }
 
         // If a request is to be execute
-        // record its memory key and suspend any other requests with the same memory key
+        // record its memory key and suspend any other following requests with the same memory key
         // until execution complete and result is available in memory cache
         var existPendingContinuations: MutableList<Continuation<Unit>>? = null
         cacheKey?.let {
